@@ -1,0 +1,371 @@
+---
+title: "Machine Learning 2"
+author: "Fernanda Almanzar"
+date: "30/3/2021"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+options(scipen=999)
+library(reshape2)
+library(dplyr)
+library(missForest)
+library(DataExplorer)
+library(caret)
+library(e1071)
+library(rpart)
+library(rattle)
+library(randomForest)
+library(naivebayes)
+```
+
+# Ejercicio 1. Tratar dataset con tamaños similares a los que se encuentran en la realidad, una vez realizada la correspondiente selección de información base.
+
+
+```{r}
+datos <- read.csv("../nassCDS.csv", dec = '.')
+head(datos)
+```
+
+
+# Ejercicio 2. Demostrar conocimiento en la limpieza, depuración e imputación de valores en el dataset seleccionado.
+
+La colunma `caseid` es unnidentificador del accidente y la coluna `x` que denota el número de la línea las eliminaremos ya que no nos aportan ninguún infomación valiosa a la hora de realizar nustra clasificación entre si ha habido muertos o no.
+
+```{r}
+datos$caseid <- NULL
+datos$X<-NULL
+```
+
+Nos disponemos a ver la cantidad de valores perdidos existentes en cada columna:
+
+```{r}
+plot_missing(data = datos)
+```
+
+Obervamos que la variable 'injSeverity`tiene un porcentaje de 0,58% de valores nulos
+
+# Ejercicio 3. Imputar Valores Perdidos
+
+Para imputar los valores perdidos usaremos la función `misForerest()`. Pero antes de implementarla debemos de pasar las columnas de tipo `character`a tipo `factor`para que la función pueda ejecutarse.
+
+```{r}
+datos <- datos %>% 
+  mutate_if(is.character, factor) -> datos
+```
+
+Las variables `frontal`, `deploy` e `ìnjSeverity` en realidad son factores por tanto las vamos a transformar a tipo factor. Pues a la hora de inputar los valores perdidos las debe conatar como factor.
+
+```{r}
+datos$frontal <- as.factor(datos$frontal)
+datos$deploy <- as.factor(datos$deploy)
+datos$injSeverity <- as.factor(datos$injSeverity)
+```
+
+Una vez convertidas las columnas ya podemos imputar los valores perdidos.
+
+```{r}
+res.miss <- missForest(datos)
+datos <- data.frame(res.miss$ximp)
+class(datos)
+```
+
+Comprobemos que ninguna columna tiene algún valor perdido:
+
+```{r}
+plot_missing(data = datos)
+```
+
+Ya no tenemos valores perdidos, ya podemos pasar a la siguiente fase del preprocesamento de variables.
+
+# Ejercicio 4 Transformación de Variables
+
+> Mostrar creatividad en la construcción de variables adicionales para mejorar las previsiones a obtener.
+
+Convertimos la variable objetivo `dead` a 0s y 1s:
+
+```{r}
+datos %>% 
+  mutate(dead = ifelse(dead == 'alive', 0, 1)) -> datos
+```
+
+
+Las variables numéricas facilitan  la computación de los modelos estadísticos. Por tanto, debemos estudiar las posibles variables que son candidatas a ser reconvertidas en números. En este caso, la que encontramos más factible es `dvcat`, la cual tiene la velocidad a la cual tuvo lugar el accidente, para ello elegirimos el punto medio de cada intervalo de velocidad.
+
+```{r}
+
+datos %>% 
+  mutate(dvcat = case_when(dvcat == '1-9km/h' ~ 5,
+                         dvcat == '10-24' ~ 16,
+                         dvcat == '25-39' ~ 33,
+                         dvcat == '40-54' ~ 47,
+                         dvcat == '55+' ~ 55)) -> datos
+
+```
+
+
+> Tener conciencia de los datos que maneja y mostrar cuidado en el uso y conocimiento de las variables que utiliza.
+
+# Ejercicio 5 Selección de Variables
+
+> Ser capaz de seleccionar información o variables relevantes para llegar a obtener buenos modelos.
+
+```{r}
+numericas <- sapply(datos, is.numeric)
+numericas <- names(datos[numericas])
+numericas1 <- c(numericas, 'dead')
+```
+
+```{r, warning=FALSE}
+datosm <- melt(datos[numericas1], id.vars = 'dead')
+ggplot(datosm, aes(x=value, fill=factor(dead))) +
+  geom_histogram(position = 'identity', alpha=0.7) +
+  facet_wrap(~variable, scales='free')
+```
+Podemos observar que en la variable `weight`,debido a los valores de su escala, tenemos una gran cantidad de valores aislados. Este hecho nos podria afectar negativamente en nuestro modelo, vamos a elimiar esta variable de nuestro modelo. Mientras que en el resto sí que podrian existir diferencias significativas. 
+
+
+Como se trata de  variables numéricas a distinguir diferencias entre 2 grupos, usaremos un Test T de Student.
+
+```{r}
+num <- c('dvcat','ageOFocc', 'yearacc', 'yearVeh')
+```
+
+### dvcat
+
+```{r}
+t.test(dvcat ~ dead, data=datos)
+```
+### ageOFocc
+
+```{r}
+t.test(ageOFocc ~ dead, data=datos)
+```
+
+### yearacc
+
+```{r}
+t.test(yearacc ~ dead, data=datos)
+```
+### yearVeh
+
+```{r}
+t.test(yearVeh ~ dead, data=datos)
+```
+
+Todas las variables presentan diferencias significativas ya que su pvalor < 0.05
+
+## Representamos las variables categóricas
+
+```{r}
+data.cat <- cbind(select_if(datos, function(x) !is.numeric(x)), dead=datos$dead)
+data.melted <- melt(data.cat, id.vars = 'dead')
+ggplot(data.melted, aes(x=value, fill=factor(dead))) +
+  geom_bar(position='dodge') +
+  facet_wrap(~variable, scales='free')
+```
+## Estudio de la independencia de las variables categóricas, utilizando el test Chi-
+
+### airbag
+
+```{r}
+chisq.test(datos$airbag ,datos$dead)
+```
+### sex
+
+```{r}
+chisq.test(datos$sex ,datos$dead)
+```
+### deploy
+
+```{r}
+chisq.test(datos$deploy ,datos$dead)
+```
+##seatbelt
+
+```{r}
+chisq.test(datos$seatbelt ,datos$dead)
+```
+
+### abcat
+
+```{r}
+chisq.test(datos$abcat ,datos$dead)
+```
+
+### frontal
+
+```{r}
+chisq.test(datos$frontal ,datos$dead)
+```
+### Severity
+
+```{r, warning=FALSE}
+chisq.test(datos$injSeverity ,datos$dead)
+```
+
+### occRole
+
+```{r}
+chisq.test(datos$occRole ,datos$dead)
+```
+
+La variable `deploy` no es siginicativa, ya que su pvalor es mayor de 0.05.Por tanto, esta variable la eliminaremos de nuestro modelo
+
+Para finalizar este apartado eliminaremos la variable `weight` la cual al tener tan gran catidad de valores aisalados, afectaria al rendimiento de nuestro modelo
+
+```{r}
+datos$weigh <-NULL
+datos$deploy <- NULL
+datos$injSeverity <-NULL
+```
+
+Demostramos que antes de entrenar  nuestro modelo tenemos más de 10000 filas y 10 columnas
+
+```{r}
+nrow(datos)
+ncol(datos)-1
+```
+Tenemos 26217 filas y 11 variables explicativas
+
+## Comparación de Modelos
+
+> Seleccionar un mejor modelo, de entre los conocidos modelos ofrecidos en el módulo anterior, y estos nuevos modelos con o sin búsqueda multiparamétrica.
+
+Lo primero sería separar los datos en `train` y `test`. Escogeremos 30% de datos para `test`.
+
+```{r}
+datossel<-datos
+```
+
+
+```{r}
+set.seed(42)
+datossel$dead <- factor(datossel$dead)
+idx <- createDataPartition(datossel$dead, p = 0.3, list=FALSE, times=1)
+train <- datossel[idx,]
+test <- datossel[-idx,]
+```
+
+
+## Regresión Logística
+
+-Entrenamos modelo
+
+```{r, warning=FALSE}
+model_1 <- glm(formula = dead ~ ., data=test, family='binomial')
+```
+
+-Calculamos predicciones
+
+```{r, warning=FALSE}
+pred_1 <- predict(model_1, newdata = test, type = 'response')
+pred_1<- factor(ifelse(pred_1 > 0.5, yes = 1, 0))
+```
+
+-Comparamos las predicciones con la realidad en una matriz de confusión
+
+
+```{r}
+conf_logistica <- confusionMatrix(data = pred_1, reference = test$dead, positive = '1')
+```
+
+## Arbol de Decision
+
+-Entrenamos modelo
+
+```{r}
+model_2 <- rpart(formula = dead ~ ., data=train)
+```
+
+-Calculamos predicciones
+
+```{r}
+pred_2 <- predict(model_2, newdata = test)[,2]
+pred_2 <- factor(ifelse(pred_2 > 0.5, yes = 1, 0))
+```
+
+-Comparamos las predicciones con la realidad en una matriz de confusión
+
+```{r, warning=FALSE}
+conf_arbol <- confusionMatrix(data = pred_2, reference = test$dead, positive = '1')
+```
+
+## Random Forest
+
+-Entrenamos modelo
+
+```{r}
+model_3 <- randomForest(dead ~ ., data=train)
+```
+
+-Calculamos predicciones
+
+```{r}
+pred_3 <- predict(model_3, newdata=test)
+```
+
+-Comparamos las predicciones con la realidad en una matriz de confusión
+
+```{r}
+conf_random <- confusionMatrix(data = factor(pred_3), reference = test$dead, positive = '1')
+```
+
+
+## Naive Bayes
+
+-Entrenamos modelo
+
+```{r}
+model_4 <- naive_bayes(dead ~., data = train)
+```
+
+-Calculamos predicciones
+
+```{r, warning=FALSE}
+pred_4 <- predict(model_4, newdata = test, type ='class' )
+```
+
+-Comparamos las predicciones con la realidad en una matriz de confusión
+
+```{r}
+conf_nb <- confusionMatrix(data = factor(pred_4), reference = test$dead, positive = '1')
+```
+
+
+## Matriz de Confusión
+
+> Manejar métricas de accuracity o de evaluación de modelos en su globalidad, o a nivel univariante.
+
+```{r}
+a <- data.frame(rbind(conf_arbol$overall,conf_logistica$overall,conf_random$overall, conf_nb$overall))
+rownames(a) <- c('Arbol', 'Regresion Logistica', 'Random Forest', 'Naive Bayes')
+a
+```
+
+
+El mejor modelo es el Random Forest, ya que su  precisión, el número de aciertos sobre el `test` es mayor en este modelo. Por tanto, nos quedaríamos con este modelo para aplicarlo en un caso real para saber si ha podido haber heridos de gravedad o muertos en un accidente de tráfico.
+
+
+Es posible que la precisón de nuestro modelo sea tan alta debido al desquilibrio que tenemos entre las muestras clasificadas como dead=0 y dead=1. Por tanto es probable que en la realidad nuestro modelo no sea tan preciso.
+
+```{r}
+table(datos$dead)
+```
+
+
+# Ejercicio 6 Informe Final Usuario
+
+> Generar un informe completo de modelización entendible por un usuario final con cierto conocimiento en estadística no especializado.
+
+Esta base de datos contiene datos de características de accidentes de tráfico, para predecir si ha muerto (dead = 1) o no (dead = 0). Esta variable es la que hemos tratado de predecir.
+
+El objetivo de este trabajo es desarrollar un modelo que sea capaz de predecir si ha habido muertos en un accidente a partir de características de este. Por tanto, para evaluar lo bueno que es realmente nuetro modelo a la hora de predecir datos que desconoce, hemos separado los datos los datos en `train` y `test`. Entrenando al modelo con los datos en `train` y  evaluando finalmente lo bueno que es nuestro modelo en los datos de `test` (desconocidos en la fase de entrenamiento).
+
+Para generar menos ruido en el modelo, hemos descartado variables que no son relevantes a la hora de detectar diferencias entre las dos categorías de `dead`
+
+Tras haber computado 4 modelos, el Rando Forest ha obtenido la mejor precisión. Por lo que este modelo lo podriamos utilizar para predecir si vamos a necesiatar de ambulancias o  más recursos cuando nos sea notificado un accidente y asi poder actuar más rápidamente y reducir el número de víctimas de accidente de tráfico.
